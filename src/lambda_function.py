@@ -6,6 +6,7 @@ import urllib3
 
 API_KEY = os.environ['API_KEY']
 S3_BUCKET = os.environ['S3_BUCKET']
+S3_PREFIX = 'docs/'
 
 def lambda_handler(event, context):
 
@@ -39,7 +40,7 @@ def lambda_handler(event, context):
             totalHits = int(meta['hits'])
             offset = int(meta['offset'])
             headlines = [doc['headline']['main'] for doc in responseObj['response']['docs']]
-            s3Key = f"{beginEndDate}-{offset}.json"
+            s3Key = f"{S3_PREFIX}{beginEndDate}-{offset}.json"
             print(json.dumps({
                 'date': beginEndDate,
                 'pageNum': pageNum,
@@ -49,11 +50,14 @@ def lambda_handler(event, context):
                 's3key': s3Key
             }))
 
-            s3Client.put_object(
-                Bucket=S3_BUCKET,
-                Key=s3Key,
-                Body=response.data
-            )
+            if 'docs' in responseObj['response'] and len(responseObj['response']['docs']) > 0:
+                doc_rows = [json.dumps(doc) for doc in responseObj['response']['docs']]
+                body = "\n".join(doc_rows)
+                s3Client.put_object(
+                    Bucket=S3_BUCKET,
+                    Key=s3Key,
+                    Body=body
+                )
 
             hasMoreResults = ((offset + len(headlines)) < totalHits)
             pageNum += 1
