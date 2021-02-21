@@ -42,10 +42,6 @@ Resources:
                           - Effect: Allow
                             Action: "s3:PutObject"
                             Resource: !Sub "arn:aws:s3:::${S3Bucket}/${RawDataPrefix}*"
-                          - Sid: Deleteme
-                            Effect: Allow
-                            Action: "s3:PutObject"
-                            Resource: !Sub "arn:aws:s3:::${S3Bucket}/*"
     
     ArticleSearchFunction:
         Type: AWS::Lambda::Function
@@ -60,7 +56,7 @@ Resources:
             MemorySize: 128
             Role: !GetAtt ArticleSearchFunctionExecutionRole.Arn
             Runtime: python3.8
-            Timeout: 75
+            Timeout: 120
 
     ArticleSearchFunctionEventPermission:
         Type: AWS::Lambda::Permission

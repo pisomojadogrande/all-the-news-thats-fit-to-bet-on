@@ -2,11 +2,12 @@ import boto3
 import datetime
 import json
 import os
+import time
 import urllib3
 
 API_KEY = os.environ['API_KEY']
 S3_BUCKET = os.environ['S3_BUCKET']
-S3_PREFIX = 'docs/'
+S3_PREFIX = os.environ['RAW_DATA_PREFIX']
 
 def lambda_handler(event, context):
 
@@ -26,6 +27,7 @@ def lambda_handler(event, context):
     pageNum = 0
     hasMoreResults = True
     statusCode = 200
+    allDocs = []
 
     while hasMoreResults:    
         requestUrl = requestUrlFmt.format(beginEndDate, beginEndDate, pageNum, API_KEY)
@@ -40,27 +42,24 @@ def lambda_handler(event, context):
             totalHits = int(meta['hits'])
             offset = int(meta['offset'])
             headlines = [doc['headline']['main'] for doc in responseObj['response']['docs']]
-            s3Key = f"{S3_PREFIX}{beginEndDate}-{offset}.json"
             print(json.dumps({
                 'date': beginEndDate,
                 'pageNum': pageNum,
                 'offset': offset,
                 'totalHits': totalHits,
-                'headlines': headlines,
-                's3key': s3Key
+                'headlines': headlines
             }))
 
             if 'docs' in responseObj['response'] and len(responseObj['response']['docs']) > 0:
-                doc_rows = [json.dumps(doc) for doc in responseObj['response']['docs']]
-                body = "\n".join(doc_rows)
-                s3Client.put_object(
-                    Bucket=S3_BUCKET,
-                    Key=s3Key,
-                    Body=body
-                )
+                docRows = [f"{json.dumps(doc)}\r\n" for doc in responseObj['response']['docs']]
+                allDocs.extend(docRows)     
 
             hasMoreResults = ((offset + len(headlines)) < totalHits)
             pageNum += 1
+
+            if hasMoreResults:
+                time.sleep(6)
+
         else:
             print(json.dumps({
                 'date': beginEndDate,
@@ -69,6 +68,20 @@ def lambda_handler(event, context):
             }))
             hasMoreResults = False
         
+
+    s3Key = f"{S3_PREFIX}{datetime.datetime.strftime(yesterday, '%Y/%m/%d')}.json"
+    body = "".join(allDocs)
+    print(json.dumps({
+        's3Bucket': S3_BUCKET,
+        's3Key': s3Key,
+        'size': len(body)
+    }))
+    s3Client.put_object(
+        Bucket=S3_BUCKET,
+        Key=s3Key,
+        Body=body
+    )
+
     return {
         'statusCode': statusCode,
         'body': json.dumps({"totalHits": totalHits})
