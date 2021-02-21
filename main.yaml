@@ -9,6 +9,17 @@ Parameters:
         Type: String
         Description: Name of S3 bucket
 
+    RawDataPrefix:
+        Type: String
+        Description: Prefix under the S3 bucket for raw data
+        Default: 'raw/'
+
+    CleanedDataPrefix:
+        Type: String
+        Description: Prefix under the S3 bucket for cleaned data
+        Default: 'json-clean/'
+
+
 Resources:
 
     ArticleSearchFunctionExecutionRole:
@@ -30,6 +41,10 @@ Resources:
                       Statement:
                           - Effect: Allow
                             Action: "s3:PutObject"
+                            Resource: !Sub "arn:aws:s3:::${S3Bucket}/${RawDataPrefix}*"
+                          - Sid: Deleteme
+                            Effect: Allow
+                            Action: "s3:PutObject"
                             Resource: !Sub "arn:aws:s3:::${S3Bucket}/*"
     
     ArticleSearchFunction:
@@ -40,6 +55,7 @@ Resources:
                 Variables:
                     API_KEY: !Ref APIKey
                     S3_BUCKET: !Ref S3Bucket
+                    RAW_DATA_PREFIX: !Ref RawDataPrefix
             Handler: "lambda_function.lambda_handler"
             MemorySize: 128
             Role: !GetAtt ArticleSearchFunctionExecutionRole.Arn
@@ -63,3 +79,27 @@ Resources:
             Targets:
                 - Arn: !GetAtt ArticleSearchFunction.Arn
                   Id: article-search-function
+
+    DataCleanerFunctionExecutionRole:
+        Type: AWS::IAM::Role
+        Properties:
+            AssumeRolePolicyDocument:
+                Version: "2012-10-17"
+                Statement:
+                    - Effect: Allow
+                      Principal:
+                          Service: "lambda.amazonaws.com"
+                      Action: "sts:AssumeRole"
+            ManagedPolicyArns:
+                - "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+            Policies:
+                - PolicyName: inline-policy
+                  PolicyDocument:
+                      Version: "2012-10-17"
+                      Statement:
+                          - Effect: Allow
+                            Action: "s3:GetObject"
+                            Resource: !Sub "arn:aws:s3:::${S3Bucket}/${RawDataPrefix}*"
+                          - Effect: Allow
+                            Action: "s3:PutObject"
+                            Resource: !Sub "arn:aws:s3:::${S3Bucket}/${CleanedDataPrefix}*"
