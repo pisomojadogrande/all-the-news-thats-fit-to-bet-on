@@ -114,3 +114,12 @@ Resources:
             Role: !GetAtt DataCleanerFunctionExecutionRole.Arn
             Runtime: python3.8
             Timeout: 60
+
+    DataCleanerFunctionPermission:
+        Type: AWS::Lambda::Permission
+        Properties:
+            FunctionName: !Ref DataCleanerFunction
+            Action: 'lambda:InvokeFunction'
+            Principal: 's3.amazonaws.com'
+            SourceAccount: !Ref AWS::AccountId
+            SourceArn: !Sub "arn:aws:s3:::${S3Bucket}"
