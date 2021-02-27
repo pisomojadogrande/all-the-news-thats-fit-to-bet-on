@@ -124,6 +124,21 @@ Resources:
             SourceAccount: !Ref AWS::AccountId
             SourceArn: !Sub "arn:aws:s3:::${S3Bucket}"
 
+
+    Database:
+        Type: AWS::Glue::Database
+        Properties:
+            CatalogId: !Ref AWS::AccountId
+            DatabaseInput:
+                Name: nyt-articles-db
+                Description: Database for nyt-articles table
+
+    CreateTableQuery:
+        Type: AWS::Athena::NamedQuery
+        Properties:
+            Database: !Ref Database
+            QueryString: !Sub CREATE EXTERNAL TABLE nyt_articles (pub_date string, headline string, top_keyword_type string, top_keyword_value string, trump_person_keyword_rank int, section_name string, subsection_name string, type_of_material string, document_type string, web_url string) ROW FORMAT SERDE 'org.openx.data.jsonserde.JsonSerDe' LOCATION "s3://${S3Bucket}/${CleanedDataPrefix}" 
+
     S3NotificationCustomResourceExecutionRole:
         Type: AWS::IAM::Role
         Properties:
@@ -197,7 +212,6 @@ Resources:
         Type: AWS::CloudFormation::CustomResource
         Properties:
             ServiceToken: !GetAtt S3NotificationCustomResourceFunction.Arn
-
 
 
 
