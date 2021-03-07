@@ -19,6 +19,19 @@ Parameters:
         Description: Prefix under the S3 bucket for cleaned data
         Default: 'json-clean/'
 
+    DatabaseName:
+        Type: String
+        Description: Name for Glue database 
+        Default: 'nyt-articles-db'
+
+    TableName:
+        Type: String
+        Description: Name for Glue table
+        Default: 'articles'
+
+    AthenaOutputBucket:
+        Type: String
+        Description: 'S3 bucket into which Athena should write query results.  It might look like aws-athena-query-results-<accountId>-<region>'
 
 Resources:
 
@@ -130,14 +143,8 @@ Resources:
         Properties:
             CatalogId: !Ref AWS::AccountId
             DatabaseInput:
-                Name: nyt-articles-db
+                Name: !Ref DatabaseName
                 Description: Database for nyt-articles table
-
-    CreateTableQuery:
-        Type: AWS::Athena::NamedQuery
-        Properties:
-            Database: !Ref Database
-            QueryString: !Sub CREATE EXTERNAL TABLE nyt_articles (pub_date string, headline string, top_keyword_type string, top_keyword_value string, trump_person_keyword_rank int, section_name string, subsection_name string, type_of_material string, document_type string, web_url string) ROW FORMAT SERDE 'org.openx.data.jsonserde.JsonSerDe' LOCATION "s3://${S3Bucket}/${CleanedDataPrefix}" 
 
     S3NotificationCustomResourceExecutionRole:
         Type: AWS::IAM::Role
@@ -159,6 +166,76 @@ Resources:
                           - Effect: Allow
                             Action: "s3:PutBucketNotification"
                             Resource: !Sub "arn:aws:s3:::${S3Bucket}"
+
+    AthenaTableCustomResourceExecutionRole:
+        Type: AWS::IAM::Role
+        Properties:
+            AssumeRolePolicyDocument:
+                Version: "2012-10-17"
+                Statement:
+                    - Effect: Allow
+                      Principal:
+                          Service: "lambda.amazonaws.com"
+                      Action: "sts:AssumeRole"
+            ManagedPolicyArns:
+                - "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+            Policies:
+                - PolicyName: inline-policy
+                  PolicyDocument:
+                      Version: "2012-10-17"
+                      Statement:
+                          - Effect: Allow
+                            Action:
+                                - "athena:StartQueryExecution"
+                                - "athena:GetQueryExecution"
+                                - "athena:GetQueryResults"
+                            Resource: "*"   
+                          - Effect: Allow
+                            Action:
+                                - "glue:GetDatabase"
+                                - "glue:CreateTable"
+                                - "glue:DeleteTable"
+                                - "glue:GetTable"
+                                - "glue:GetPartitions"
+                            Resource: 
+                                - !Sub "arn:aws:glue:${AWS::Region}:${AWS::AccountId}:catalog"
+                                - !Sub "arn:aws:glue:${AWS::Region}:${AWS::AccountId}:database/${DatabaseName}"
+                                - !Sub "arn:aws:glue:${AWS::Region}:${AWS::AccountId}:table/${DatabaseName}/${TableName}"
+                          - Effect: Allow
+                            Action:
+                                - "s3:GetBucketLocation"
+                                - "s3:ListBucket"
+                                - "s3:GetO*"
+                            Resource:
+                                - !Sub "arn:aws:s3:::${S3Bucket}"
+                                - !Sub "arn:aws:s3:::${S3Bucket}/${CleanedDataPrefix}*"
+                          - Effect: Allow
+                            Action:
+                                - "s3:GetBucketLocation"
+                                - "s3:ListBucket"
+                                - "s3:PutO*"
+                            Resource:
+                                - !Sub "arn:aws:s3:::${AthenaOutputBucket}"
+                                - !Sub "arn:aws:s3:::${AthenaOutputBucket}/*"
+
+    AthenaTableCustomResourceFunction:
+        Type: AWS::Lambda::Function
+        Properties:
+            Code: ./src/table-custom-resource
+            Environment:
+                Variables:
+                    CATALOG: !Ref AWS::AccountId
+                    DATABASE_NAME: !Ref DatabaseName
+                    TABLE_NAME: !Ref TableName
+                    ATHENA_OUTPUT_BUCKET: !Ref AthenaOutputBucket
+                    ATHENA_OUTPUT_PREFIX: !Sub "AthenaTableCustomResource-{AWS::StackName}/"
+                    TABLE_DATA_LOCATION: !Sub "s3://${S3Bucket}/${CleanedDataPrefix}"
+                    POLL_INTERVAL_SEC: 2
+            Handler: "lambda_function.handler"
+            MemorySize: 128
+            Role: !GetAtt AthenaTableCustomResourceExecutionRole.Arn
+            Runtime: python3.8
+            Timeout: 120
 
     S3NotificationCustomResourceFunction:
         Type: AWS::Lambda::Function
