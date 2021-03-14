@@ -146,26 +146,6 @@ Resources:
                 Name: !Ref DatabaseName
                 Description: Database for nyt-articles table
 
-    S3NotificationCustomResourceExecutionRole:
-        Type: AWS::IAM::Role
-        Properties:
-            AssumeRolePolicyDocument:
-                Version: "2012-10-17"
-                Statement:
-                    - Effect: Allow
-                      Principal:
-                          Service: "lambda.amazonaws.com"
-                      Action: "sts:AssumeRole"
-            ManagedPolicyArns:
-                - "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
-            Policies:
-                - PolicyName: inline-policy
-                  PolicyDocument:
-                      Version: "2012-10-17"
-                      Statement:
-                          - Effect: Allow
-                            Action: "s3:PutBucketNotification"
-                            Resource: !Sub "arn:aws:s3:::${S3Bucket}"
 
     AthenaTableCustomResourceExecutionRole:
         Type: AWS::IAM::Role
@@ -242,6 +222,36 @@ Resources:
         Properties:
             ServiceToken: !GetAtt AthenaTableCustomResourceFunction.Arn
 
+    SiteBucket:
+        Type: AWS::S3::Bucket
+        Properties:
+            PublicAccessBlockConfiguration:
+                BlockPublicAcls: TRUE
+                BlockPublicPolicy: TRUE
+                IgnorePublicAcls: TRUE
+                RestrictPublicBuckets: TRUE
+
+    S3NotificationCustomResourceExecutionRole:
+        Type: AWS::IAM::Role
+        Properties:
+            AssumeRolePolicyDocument:
+                Version: "2012-10-17"
+                Statement:
+                    - Effect: Allow
+                      Principal:
+                          Service: "lambda.amazonaws.com"
+                      Action: "sts:AssumeRole"
+            ManagedPolicyArns:
+                - "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+            Policies:
+                - PolicyName: inline-policy
+                  PolicyDocument:
+                      Version: "2012-10-17"
+                      Statement:
+                          - Effect: Allow
+                            Action: "s3:PutBucketNotification"
+                            Resource: !Sub "arn:aws:s3:::${S3Bucket}"
+
     S3NotificationCustomResourceFunction:
         Type: AWS::Lambda::Function
         Properties:
@@ -296,4 +306,70 @@ Resources:
             ServiceToken: !GetAtt S3NotificationCustomResourceFunction.Arn
 
 
+    SiteBucketCleanoutCustomResourceExecutionRole:
+        Type: AWS::IAM::Role
+        Properties:
+            AssumeRolePolicyDocument:
+                Version: "2012-10-17"
+                Statement:
+                    - Effect: Allow
+                      Principal:
+                          Service: "lambda.amazonaws.com"
+                      Action: "sts:AssumeRole"
+            ManagedPolicyArns:
+                - "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+            Policies:
+                - PolicyName: inline-policy
+                  PolicyDocument:
+                      Version: "2012-10-17"
+                      Statement:
+                          - Effect: Allow
+                            Action:
+                                - "s3:ListBucket"
+                                - "s3:DeleteObject"
+                            Resource:
+                                - !Sub "arn:aws:s3:::${SiteBucket}"
+                                - !Sub "arn:aws:s3:::${SiteBucket}/*"
 
+    SiteBucketCleanoutCustomResourceFunction:
+        Type: AWS::Lambda::Function
+        Properties:
+            Handler: index.handler
+            MemorySize: 128
+            Role: !GetAtt SiteBucketCleanoutCustomResourceExecutionRole.Arn
+            Runtime: python3.8
+            Timeout: 60
+            Code:
+                ZipFile: !Sub |
+                    import json
+                    import cfnresponse
+                    import boto3
+                    BUCKET = '${SiteBucket}'
+                    def handler(event, context):
+                        request_type = event['RequestType']
+                        s3_client = boto3.client('s3')
+                        cfn_status = cfnresponse.SUCCESS
+                        if request_type == 'Delete':
+                            try:
+                                response = s3_client.list_objects_v2(
+                                    Bucket=BUCKET
+                                )
+                                if 'Contents' in response:
+                                    print(f"{BUCKET} has {len(response['Contents'])} items")
+                                    for list_item in response['Contents']:
+                                        key = list_item['Key']
+                                        print(f"Deleting {BUCKET}/{key}")
+                                        s3_client.delete_object(
+                                            Bucket=BUCKET,
+                                            Key=key
+                                        )
+                            except Exception as e:
+                                print(f"S3 Error {e}")
+                                cfn_status = cfnresponse.FAILED
+                                    
+                        cfnresponse.send(event, context, cfn_status, None, 'SiteBucketCleanoutCustomResource')
+
+    SiteBucketCleanoutCustomResource:
+        Type: AWS::CloudFormation::CustomResource
+        Properties:
+            ServiceToken: !GetAtt SiteBucketCleanoutCustomResourceFunction.Arn
