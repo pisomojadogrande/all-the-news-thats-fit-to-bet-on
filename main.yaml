@@ -231,6 +231,43 @@ Resources:
                 IgnorePublicAcls: TRUE
                 RestrictPublicBuckets: TRUE
 
+    SiteDistributionOriginAccessIdentity:
+        Type: AWS::CloudFront::CloudFrontOriginAccessIdentity
+        Properties:
+            CloudFrontOriginAccessIdentityConfig:
+                Comment: CloudFrontIdentityForArticlesSite
+
+    SiteBucketPolicy:
+        Type: AWS::S3::BucketPolicy
+        Properties:
+            Bucket: !Ref SiteBucket
+            PolicyDocument:
+                Statement:
+                    - Effect: Allow
+                      Principal:
+                          AWS: !Sub arn:aws:iam::cloudfront:user/CloudFront Origin Access Identity ${SiteDistributionOriginAccessIdentity}
+                      Action:
+                          - "s3:GetObject"
+                      Resource: !Sub ${SiteBucket.Arn}/*
+
+    SiteDistribution:
+        Type: AWS::CloudFront::Distribution
+        Properties:
+            DistributionConfig:
+                Enabled: true
+                Origins:
+                    - DomainName: !GetAtt SiteBucket.DomainName
+                      Id: static-s3
+                      S3OriginConfig:
+                          OriginAccessIdentity: !Sub origin-access-identity/cloudfront/${SiteDistributionOriginAccessIdentity}
+                DefaultRootObject: line.html
+                DefaultCacheBehavior:
+                    ViewerProtocolPolicy: redirect-to-https
+                    ForwardedValues:
+                        QueryString: false
+                    TargetOriginId: static-s3
+                PriceClass: PriceClass_100
+
     S3NotificationCustomResourceExecutionRole:
         Type: AWS::IAM::Role
         Properties:
@@ -373,3 +410,8 @@ Resources:
         Type: AWS::CloudFormation::CustomResource
         Properties:
             ServiceToken: !GetAtt SiteBucketCleanoutCustomResourceFunction.Arn
+
+Outputs:
+    SiteUrl:
+        Description: URL to CloudFormation for Site uRL
+        Value: !Sub https://${SiteDistribution.DomainName}/
