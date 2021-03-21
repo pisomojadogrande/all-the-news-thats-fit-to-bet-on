@@ -7,6 +7,10 @@ import re
 S3_BUCKET = os.environ['S3_BUCKET']
 S3_RAW_DATA_PREFIX = os.environ['RAW_DATA_PREFIX']
 S3_CLEANED_DATA_PREFIX = os.environ['CLEANED_DATA_PREFIX']
+SITE_BUCKET = os.environ['SITE_BUCKET']
+CHART_DATA_KEY = os.environ['CHART_DATA_KEY']
+
+s3Client = boto3.client('s3')
 
 # Event format
 # {
@@ -89,12 +93,64 @@ def cleanArticleData(rawArticleData):
                 cleanedArticleJson['trump_person_keyword_rank'] = keyword['rank']
 
     return f"{json.dumps(cleanedArticleJson)}\r\n"
+
+# s3_key will look like json-clean/2021/03/01.json
+def update_chart_data(s3_key, article_count):
+    match = re.search(r'(\d{4})\/(\d{2})\/(\d{2})', s3_key)
+    chart_date = f"{match.group(1)}-{match.group(2)}-{match.group(3)}"
+    get_response = s3Client.get_object(
+        Bucket=SITE_BUCKET,
+        Key=CHART_DATA_KEY
+    )
+    existing_chart_data = json.loads(get_response['Body'].read().decode('utf-8'))
+    new_data_point = [ chart_date, article_count ]
+    inserted = False
+    for i in range(len(existing_chart_data['chartData'])):
+        existing_data_point = existing_chart_data['chartData'][i]
+        item_date = existing_data_point[0]
+        if chart_date == item_date:
+            print(json.dumps({
+                'dataPoint': {
+                    'newDataPoint': new_data_point,
+                    'overwrittenDataPoint': existing_data_point
+                }
+            }))
+            existing_chart_data['chartData'][i] = new_data_point
+            inserted = True
+            break
+        if chart_date < item_date:
+            print(json.dumps({
+                'dataPoint': {
+                    'newDataPoint': new_data_point,
+                    'beforeDataPoint': existing_data_point
+                }
+            }))
+            existing_chart_data['chartData'].insert(i, new_data_point)
+            inserted = True
+            break
+    if not inserted:
+        print(json.dumps({
+            'dataPoint': {
+                'newDataPoint': new_data_point
+            }
+        }))
+        existing_chart_data['chartData'].append(new_data_point)
+
+    print(json.dumps({'chartDataPointCount': len(existing_chart_data['chartData'])}))
+    s3Client.put_object(
+        Bucket=SITE_BUCKET,
+        Key=CHART_DATA_KEY,
+        Body=json.dumps(existing_chart_data)
+    )
+    print(json.dumps({'updatedChartData': CHART_DATA_KEY}))
+
+
+
              
 
 def lambda_handler(event, context):
     print(json.dumps({'inputEvent': event}))
     
-    s3Client = boto3.client('s3')
     totalArticles = 0
     for record in event['Records']:
         if not validate_record(record):
@@ -125,6 +181,8 @@ def lambda_handler(event, context):
         )
 
         totalArticles += len(cleanedArticles)
+        update_chart_data(cleanedKey, totalArticles)
+
     return {
         'statusCode': 200,
         'body': json.dumps({
