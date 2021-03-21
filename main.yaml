@@ -33,6 +33,19 @@ Parameters:
         Type: String
         Description: 'S3 bucket into which Athena should write query results.  It might look like aws-athena-query-results-<accountId>-<region>'
 
+    SiteDomainName:
+        Type: String
+        Description: Alternate domain name for the site (you will set up the DNS record outside this template)
+
+    AcmCertificateArn:
+        Type: String
+        Description: ARN of the certificate matching the site domain name
+        
+    ChartDataKey:
+        Type: String
+        Description: S3 key in SiteBucket at which the chart will look for data
+        Default: 'chartData.json'
+
 Resources:
 
     ArticleSearchFunctionExecutionRole:
@@ -108,10 +121,14 @@ Resources:
                       Statement:
                           - Effect: Allow
                             Action: "s3:GetObject"
-                            Resource: !Sub "arn:aws:s3:::${S3Bucket}/${RawDataPrefix}*"
+                            Resource: 
+                                - !Sub "arn:aws:s3:::${S3Bucket}/${RawDataPrefix}*"
+                                - !Sub "arn:aws:s3:::${SiteBucket}/${ChartDataKey}"
                           - Effect: Allow
                             Action: "s3:PutObject"
-                            Resource: !Sub "arn:aws:s3:::${S3Bucket}/${CleanedDataPrefix}*"
+                            Resource:
+                                - !Sub "arn:aws:s3:::${S3Bucket}/${CleanedDataPrefix}*"
+                                - !Sub "arn:aws:s3:::${SiteBucket}/${ChartDataKey}"
 
     DataCleanerFunction:
         Type: AWS::Lambda::Function
@@ -122,6 +139,8 @@ Resources:
                     S3_BUCKET: !Ref S3Bucket
                     RAW_DATA_PREFIX: !Ref RawDataPrefix
                     CLEANED_DATA_PREFIX: !Ref CleanedDataPrefix
+                    SITE_BUCKET: !Ref SiteBucket
+                    CHART_DATA_KEY: !Ref ChartDataKey
             Handler: "lambda_function.lambda_handler"
             MemorySize: 128
             Role: !GetAtt DataCleanerFunctionExecutionRole.Arn
@@ -250,11 +269,34 @@ Resources:
                           - "s3:GetObject"
                       Resource: !Sub ${SiteBucket.Arn}/*
 
+    SiteDistributionCachePolicy:
+        Type: AWS::CloudFront::CachePolicy
+        Properties:
+            CachePolicyConfig:
+                Name: "FiveMinuteTTL"
+                MinTTL: 0.0
+                MaxTTL: 300.0
+                DefaultTTL: 300.0
+                ParametersInCacheKeyAndForwardedToOrigin:
+                    EnableAcceptEncodingGzip: false
+                    CookiesConfig:
+                        CookieBehavior: none
+                    HeadersConfig:
+                        HeaderBehavior: none
+                    QueryStringsConfig:
+                        QueryStringBehavior: none
+
     SiteDistribution:
         Type: AWS::CloudFront::Distribution
         Properties:
             DistributionConfig:
                 Enabled: true
+                Aliases:
+                    - !Ref SiteDomainName
+                ViewerCertificate:
+                    AcmCertificateArn: !Ref AcmCertificateArn
+                    SslSupportMethod: sni-only
+                    MinimumProtocolVersion: TLSv1
                 Origins:
                     - DomainName: !GetAtt SiteBucket.DomainName
                       Id: static-s3
@@ -266,6 +308,11 @@ Resources:
                     ForwardedValues:
                         QueryString: false
                     TargetOriginId: static-s3
+                CacheBehaviors:
+                    - CachePolicyId: !Ref SiteDistributionCachePolicy
+                      PathPattern: "/*"
+                      TargetOriginId: static-s3
+                      ViewerProtocolPolicy: redirect-to-https
                 PriceClass: PriceClass_100
 
     S3NotificationCustomResourceExecutionRole:
